@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Instant Photo Camera Experience</title>
+    <!-- Handwritten Font for Date -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@700&display=swap" rel="stylesheet">
+
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+            /* Prevent pull-to-refresh on mobile */
+            overscroll-behavior: none;
+        }
+
+        /* --- LAYOUTS --- */
+        
+        #viewfinder-container {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        #photo-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 5;
+            pointer-events: none;
+            display: flex;
+            justify-content: center;
+            align-items: center; /* Centered vertically */
+            padding-top: 0; 
+            opacity: 0;
+            transition: opacity 0.5s;
+        }
+        
+        .rainbow-strip {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 120px;
+            z-index: 0;
+            background: linear-gradient(to right, 
+                #E4002B 20%, 
+                #F5821F 20%, #F5821F 40%, 
+                #FFC600 40%, #FFC600 60%, 
+                #60B739 60%, #60B739 80%, 
+                #0087CF 80%
+            );
+            box-shadow: 0 0 30px rgba(0,0,0,0.5);
+            pointer-events: none;
+        }
+
+        /* Wrapper for Slide Animation */
+        #instant-photo-animator {
+            /* Dynamic Scaling Logic */
+            width: min(100vw, 85vh);
+            height: auto;
+            max-width: none; 
+            
+            transform: translateY(-150%);
+            transition: transform 5s cubic-bezier(0.25, 1, 0.5, 1);
+            position: relative;
+            z-index: 2;
+            pointer-events: auto; /* Allow tapping on the frame */
+        }
+
+        /* The Instant Photo Paper */
+        #instant-photo-frame {
+            background-color: #f7f7f5;
+            /* SVG Noise Filter for Paper Texture */
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.08'/%3E%3C/svg%3E");
+            background-repeat: repeat;
+            
+            padding: 5% 5% 25% 5%; /* Responsive padding determines aspect ratio */
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            width: 100%;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            border-radius: 4px;
+            transform-origin: center center;
+            transition: transform 0.1s linear;
+            position: relative;
+            cursor: pointer; /* Indicate tappable */
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        #instant-photo-frame:active {
+            transform: scale(0.98); /* Feedback for tap */
+        }
+
+        #instant-photo-image-container {
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            background-color: #222;
+            overflow: hidden;
+            position: relative;
+            border-radius: 4px;
+        }
+
+        /* Overlay to cast shadow ONTO the photo */
+        #instant-photo-image-container::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            box-shadow: inset 0 2px 8px rgba(0,0,0,0.3);
+            border-radius: 4px;
+            pointer-events: none; /* Let clicks pass through */
+            z-index: 10;
+        }
+
+        #instant-photo-image-container canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Date Caption */
+        #date-caption {
+            position: absolute;
+            bottom: 8%; /* Responsive positioning */
+            left: 0;
+            width: 100%;
+            text-align: center;
+            font-family: 'Caveat', cursive;
+            font-weight: 700;
+            font-style: italic;
+            font-size: clamp(1rem, 5vw, 2rem); /* Dynamic font size based on width */
+            color: #00008b;
+            opacity: 0;
+            transform: rotate(-2deg);
+            transition: opacity 2s ease-in;
+            pointer-events: none;
+        }
+        
+        /* Shake/Tap Hint Text */
+        #shake-text {
+            position: absolute;
+            bottom: 10%;
+            left: 0;
+            width: 100%;
+            text-align: center;
+            color: #888;
+            font-size: 1.2rem;
+            font-style: italic;
+            opacity: 0;
+            transition: opacity 1s;
+            pointer-events: none;
+        }
+
+        /* --- UI ELEMENTS --- */
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        #shutter-btn {
+            position: absolute;
+            top: 30px;
+            right: 30px;
+            width: 70px;
+            height: 70px;
+            background: radial-gradient(circle at 35% 35%, #ff5e57, #b00020);
+            border: 4px solid #e0e0e0;
+            outline: 1px solid #999;
+            border-radius: 50%;
+            box-shadow: 0 6px 15px rgba(0,0,0,0.6), inset 0 2px 5px rgba(255,255,255,0.4);
+            cursor: pointer;
+            pointer-events: auto;
+            display: none;
+            transition: transform 0.1s, box-shadow 0.1s;
+        }
+        #shutter-btn:active { 
+            transform: scale(0.95) translateY(2px);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.5); 
+        }
+
+        /* Toggle Camera Button */
+        #toggle-cam-btn {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            width: 70px;
+            height: 70px;
+            background: #222; /* Dark background to contrast with shutter */
+            border: 4px solid #e0e0e0;
+            outline: 1px solid #999;
+            border-radius: 50%;
+            box-shadow: 0 6px 15px rgba(0,0,0,0.6), inset 0 2px 5px rgba(255,255,255,0.1);
+            cursor: pointer;
+            pointer-events: auto;
+            display: none; /* Shown via JS */
+            justify-content: center;
+            align-items: center;
+            transition: transform 0.1s, box-shadow 0.1s;
+            z-index: 12;
+        }
+        #toggle-cam-btn:active {
+            transform: scale(0.95) translateY(2px);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+        }
+        #toggle-cam-btn svg {
+            width: 32px;
+            height: 32px;
+            fill: #e0e0e0;
+        }
+
+        .action-btn {
+            position: absolute;
+            bottom: 40px;
+            width: 60px;
+            height: 60px;
+            background: rgba(255,255,255,0.2);
+            backdrop-filter: blur(10px);
+            border: 2px solid rgba(255,255,255,0.5);
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            pointer-events: auto;
+            color: white;
+            transition: transform 0.2s, background 0.2s, opacity 0.5s;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .action-btn:hover { background: rgba(255,255,255,0.3); transform: scale(1.05); }
+        .action-btn:active { transform: scale(0.95); }
+        .action-btn svg { width: 28px; height: 28px; fill: white; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.3)); }
+
+        #btn-save { left: 40px; }
+        #btn-retake { right: 40px; }
+
+        #start-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: #111;
+            z-index: 20;
+            pointer-events: auto;
+            transition: opacity 0.5s;
+        }
+
+        #start-btn {
+            position: relative;
+            z-index: 10;
+            background-color: #F5821F;
+            color: #fff;
+            border: none;
+            padding: 20px 50px;
+            font-size: 1.4rem;
+            font-family: "Courier New", Courier, monospace;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            border-radius: 4px;
+            box-shadow: 0 6px 0 #be5000, 0 15px 20px rgba(0,0,0,0.4);
+            cursor: pointer;
+            transition: all 0.1s ease;
+        }
+        
+        #start-btn:active { transform: translateY(6px); box-shadow: 0 0 0 #be5000, inset 0 2px 5px rgba(0,0,0,0.2); }
+
+        #error-msg {
+            color: #ff4444;
+            margin-top: 20px;
+            text-align: center;
+            max-width: 80%;
+            display: none;
+            position: relative;
+            z-index: 10;
+            font-family: monospace;
+        }
+
+        #flash-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            z-index: 100;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.1s;
+        }
+        
+        .hidden { opacity: 0 !important; pointer-events: none !important; }
+        .pointer-auto { pointer-events: auto !important; }
+        
+    </style>
+</head>
+<body>
+
+    <div id="viewfinder-container"></div>
+
+    <div id="photo-layer">
+        <div class="rainbow-strip"></div>
+        <div id="instant-photo-animator">
+            <div id="instant-photo-frame">
+                <div id="instant-photo-image-container"></div>
+                <div id="date-caption"></div>
+                <div id="shake-text">Shake or Tap to develop faster!</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="ui-layer">
+        <button id="shutter-btn"></button>
+        <button id="toggle-cam-btn" title="Switch Camera">
+            <!-- Reuse or find a switch camera icon -->
+            <svg viewBox="0 0 24 24"><path d="M20 4h-3.17L15 2H9L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-5 11.5V13H9v2.5L5.5 12 9 8.5V11h6V8.5l3.5 3.5-3.5 3.5z"/></svg>
+        </button>
+        <button id="btn-save" class="action-btn" title="Download Photo">
+            <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+        </button>
+        <button id="btn-retake" class="action-btn" title="Retake Photo">
+            <svg viewBox="0 0 24 24"><path d="M9 3L5 6.99h3V14h2V6.99h3L9 3zm7 14.01V10h-2v7.01h-3L15 21l4-3.99h-3z"/></svg>
+        </button>
+    </div>
+
+    <div id="start-container">
+        <div class="rainbow-strip"></div>
+        <button id="start-btn">Start Camera</button>
+        <div id="error-msg"></div>
+    </div>
+
+    <div id="flash-overlay"></div>
+    <video id="video" playsinline muted style="display:none;"></video>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script>
+        // Preload Texture for Export
+        const textureDataUrl = "data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.08'/%3E%3C/svg%3E";
+        const textureImg = new Image();
+        textureImg.src = textureDataUrl;
+
+        // Try to trigger fullscreen on ANY early interaction
+        const triggerFullscreen = async () => {
+            if (!document.fullscreenElement) {
+                try {
+                    if (document.documentElement.requestFullscreen) {
+                        await document.documentElement.requestFullscreen();
+                    } else if (document.documentElement.webkitRequestFullscreen) {
+                        await document.documentElement.webkitRequestFullscreen();
+                    }
+                } catch(e) { /* ignore */ }
+            }
+        };
+        // Add listeners for aggressive fullscreen triggering
+        ['click', 'touchstart', 'mousedown'].forEach(evt => 
+            document.body.addEventListener(evt, triggerFullscreen, { once: true })
+        );
+
+
+        const CONFIG = {
+            developmentTime: 30.0, 
+            shakeMultiplier: 3.0,
+            shakeThreshold: 2.0,
+            shakeVisualIntensity: 50,
+            tapBoost: 1.5 // Seconds added per tap
+        };
+
+        const state = {
+            isDeveloping: false,
+            developmentProgress: 0.0,
+            currentSpeed: 1.0,
+            lastTime: 0,
+            lastAcc: { x: 0, y: 0, z: 0 },
+            isShaking: false,
+            facingMode: 'environment' // default rear camera
+        };
+
+        const els = {
+            video: document.getElementById('video'),
+            viewfinderContainer: document.getElementById('viewfinder-container'),
+            photoLayer: document.getElementById('photo-layer'),
+            instantPhotoAnimator: document.getElementById('instant-photo-animator'),
+            instantPhotoFrame: document.getElementById('instant-photo-frame'),
+            instantPhotoImageContainer: document.getElementById('instant-photo-image-container'),
+            dateCaption: document.getElementById('date-caption'),
+            shutterBtn: document.getElementById('shutter-btn'),
+            toggleCamBtn: document.getElementById('toggle-cam-btn'),
+            btnSave: document.getElementById('btn-save'),
+            btnRetake: document.getElementById('btn-retake'),
+            startContainer: document.getElementById('start-container'),
+            startBtn: document.getElementById('start-btn'),
+            errorMsg: document.getElementById('error-msg'),
+            flash: document.getElementById('flash-overlay'),
+            shakeText: document.getElementById('shake-text')
+        };
+
+        let vfScene, vfCamera, vfRenderer, vfMaterial, vfMesh;
+        let videoTexture;
+        let photoScene, photoCamera, photoRenderer, photoMaterial, photoMesh;
+        let photoTexture;
+        let audioCtx;
+
+        // --- Shaders ---
+        const commonVertexShader = `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position, 1.0); }`;
+        const viewfinderFragmentShader = `
+            uniform sampler2D uTexture; uniform vec2 uResolution; uniform vec2 uTextureResolution; varying vec2 vUv;
+            vec2 getCoverUv(vec2 uv, vec2 resolution, vec2 texResolution) {
+                float screenAspect = resolution.x / resolution.y; float texAspect = texResolution.x / texResolution.y;
+                vec2 ratio = vec2(min((screenAspect / texAspect), 1.0), min((texAspect / screenAspect), 1.0));
+                return vec2(uv.x * ratio.x + (1.0 - ratio.x) * 0.5, uv.y * ratio.y + (1.0 - ratio.y) * 0.5);
+            }
+            void main() {
+                vec2 uv = (uTextureResolution.x > 0.0) ? getCoverUv(vUv, uResolution, uTextureResolution) : vUv;
+                vec4 color = texture2D(uTexture, uv);
+                vec2 aspect = vec2(uResolution.x / uResolution.y, 1.0);
+                float dist = length((vUv - vec2(0.5)) * aspect);
+                float mask = 1.0 - smoothstep(0.3, 0.45, dist);
+                gl_FragColor = vec4(color.rgb * mask, 1.0);
+            }
+        `;
+        const photoFragmentShader = `
+            uniform sampler2D uTexture; uniform float uProgress; varying vec2 vUv;
+            vec3 applyInstantPhotoGrade(vec3 color) {
+                // 1. Brightness Boost (Medium-High)
+                color = color * 1.3;
+
+                // 2. Gamma Curve
+                color = pow(color, vec3(1.2));
+
+                // 3. Bloom Simulation
+                float lum = dot(color, vec3(0.299, 0.587, 0.114));
+                float bloom = smoothstep(0.5, 0.95, lum);
+                color += color * bloom * 0.85; 
+
+                // 4. Tone Mapping (Medium-Strong Cool Shift)
+                vec3 tinted = color;
+                tinted.r *= 0.75; 
+                tinted.g *= 0.88; 
+                tinted.b *= 1.30; 
+
+                // 5. Vintage Shadow Lift (Medium Blue Shadows)
+                tinted = mix(tinted, vec3(0.0, 0.0, 0.25), (1.0 - lum) * 0.3);
+
+                // 6. Final Clamp
+                return clamp(tinted, 0.0, 1.0);
+            }
+            void main() {
+                vec3 developed = applyInstantPhotoGrade(texture2D(uTexture, vUv).rgb);
+                float lum = dot(developed, vec3(0.299, 0.587, 0.114));
+                float reveal = smoothstep(0.0, 1.0, uProgress * 1.5 - (lum * 0.5));
+                vec3 mixed = mix(vec3(0.65, 0.68, 0.62), developed, reveal);
+                gl_FragColor = vec4(pow(mixed, vec3(3.0 - (2.0 * uProgress))), 1.0);
+            }
+        `;
+
+        // --- Audio ---
+        function initAudio() {
+            try {
+                const AC = window.AudioContext || window.webkitAudioContext;
+                if (AC) audioCtx = new AC();
+            } catch (e) { console.warn("No Web Audio"); }
+        }
+
+        function playShutterSound() {
+            if (!audioCtx) return;
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const t = audioCtx.currentTime;
+            
+            const bSize = audioCtx.sampleRate * 0.05;
+            const buf = audioCtx.createBuffer(1, bSize, audioCtx.sampleRate);
+            const d = buf.getChannelData(0);
+            for(let i=0; i<bSize; i++) d[i] = (Math.random() * 2 - 1);
+            
+            const n = audioCtx.createBufferSource();
+            n.buffer = buf;
+            const f = audioCtx.createBiquadFilter();
+            f.type = 'highpass'; f.frequency.value = 800;
+            const g = audioCtx.createGain();
+            g.gain.setValueAtTime(1.0, t); g.gain.exponentialRampToValueAtTime(0.01, t + 0.05);
+            n.connect(f); f.connect(g); g.connect(audioCtx.destination);
+            n.start(t);
+
+            const osc = audioCtx.createOscillator();
+            osc.frequency.setValueAtTime(800, t); osc.frequency.exponentialRampToValueAtTime(100, t + 0.05);
+            const og = audioCtx.createGain();
+            og.gain.setValueAtTime(0.5, t); og.gain.exponentialRampToValueAtTime(0.01, t + 0.05);
+            osc.connect(og); og.connect(audioCtx.destination);
+            osc.start(t); osc.stop(t+0.05);
+        }
+
+        function playMotorSound() {
+            if (!audioCtx) return;
+            const t = audioCtx.currentTime;
+            const dur = 2.0;
+            const osc = audioCtx.createOscillator();
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(150, t); osc.frequency.linearRampToValueAtTime(140, t + dur);
+            const f = audioCtx.createBiquadFilter();
+            f.type = 'lowpass'; f.frequency.value = 300;
+            const g = audioCtx.createGain();
+            g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.1, t + 0.1); g.gain.setValueAtTime(0.1, t + dur - 0.2); g.gain.linearRampToValueAtTime(0, t + dur);
+            osc.connect(f); f.connect(g); g.connect(audioCtx.destination);
+            osc.start(t); osc.stop(t+dur);
+        }
+
+        // --- Logic ---
+        els.startBtn.addEventListener('click', initCamera);
+        els.shutterBtn.addEventListener('click', takePhoto);
+        els.toggleCamBtn.addEventListener('click', toggleCamera);
+        els.btnRetake.addEventListener('click', retakePhoto);
+        els.btnSave.addEventListener('click', savePhoto);
+        
+        // TAP TO DEVELOP Logic
+        els.instantPhotoAnimator.addEventListener('click', (e) => {
+            if (state.isDeveloping && state.developmentProgress < 1.0) {
+                // Boost progress
+                const boost = CONFIG.tapBoost / CONFIG.developmentTime;
+                state.developmentProgress = Math.min(1.0, state.developmentProgress + boost);
+                
+                // Visual feedback
+                // Don't override shake transform if already shaking hard, but add small bump
+                if (!state.isShaking) {
+                   els.instantPhotoFrame.style.transform = 'scale(0.98)';
+                   setTimeout(() => els.instantPhotoFrame.style.transform = 'scale(1)', 100);
+                }
+            }
+        });
+
+        async function initCamera() {
+            // Also try fullscreen here in case start btn was the first interaction
+            triggerFullscreen();
+
+            initAudio();
+            if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+                try {
+                    const resp = await DeviceMotionEvent.requestPermission();
+                    if (resp === 'granted') window.addEventListener('devicemotion', handleMotion);
+                } catch (e) { console.log(e); }
+            } else {
+                window.addEventListener('devicemotion', handleMotion);
+            }
+
+            els.startContainer.classList.add('hidden');
+            // Initial load with default facingMode
+            setupStream(state.facingMode);
+        }
+
+        async function setupStream(mode) {
+             try {
+                // Stop existing tracks if any
+                if (els.video.srcObject) {
+                    els.video.srcObject.getTracks().forEach(track => track.stop());
+                }
+
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: mode, width: {ideal:1920}, height: {ideal:1080} }, 
+                    audio: false 
+                });
+                els.video.srcObject = stream;
+                await els.video.play();
+                
+                if (!vfRenderer) {
+                    initViewfinder();
+                } else {
+                    // Update mesh mirroring based on camera mode
+                    if (mode === 'user') {
+                        vfMesh.scale.x = -1; // Mirror front camera
+                    } else {
+                        vfMesh.scale.x = 1; // Normal rear camera
+                    }
+                }
+
+                els.shutterBtn.style.display = 'block';
+                els.toggleCamBtn.style.display = 'flex'; // Show toggle button
+                animate();
+                window.addEventListener('resize', onWindowResize);
+            } catch (err) {
+                console.error(err);
+                els.errorMsg.style.display = 'block'; els.errorMsg.innerText = "Camera access error.";
+                els.startContainer.classList.remove('hidden');
+            }
+        }
+
+        async function toggleCamera() {
+            state.facingMode = state.facingMode === 'environment' ? 'user' : 'environment';
+            await setupStream(state.facingMode);
+        }
+
+        function initViewfinder() {
+            vfScene = new THREE.Scene();
+            vfCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+            vfRenderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
+            vfRenderer.setSize(window.innerWidth, window.innerHeight);
+            vfRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            els.viewfinderContainer.appendChild(vfRenderer.domElement);
+            videoTexture = new THREE.VideoTexture(els.video);
+            videoTexture.minFilter = THREE.LinearFilter;
+            vfMaterial = new THREE.ShaderMaterial({
+                uniforms: { uTexture: { value: videoTexture }, uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) }, uTextureResolution: { value: new THREE.Vector2(els.video.videoWidth, els.video.videoHeight) } },
+                vertexShader: commonVertexShader, fragmentShader: viewfinderFragmentShader,
+                side: THREE.DoubleSide // Fix for mirroring flipping normals
+            });
+            vfMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), vfMaterial);
+            
+            // Check initial mirror state
+            if (state.facingMode === 'user') vfMesh.scale.x = -1;
+            
+            vfScene.add(vfMesh);
+        }
+
+        function initPhotoScene(tex) {
+            if (photoRenderer) els.instantPhotoImageContainer.innerHTML = '';
+            photoScene = new THREE.Scene();
+            photoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+            // Must preserve buffer for download
+            photoRenderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true });
+            const w = els.instantPhotoImageContainer.clientWidth, h = els.instantPhotoImageContainer.clientHeight;
+            photoRenderer.setSize(w, h);
+            els.instantPhotoImageContainer.appendChild(photoRenderer.domElement);
+            photoMaterial = new THREE.ShaderMaterial({
+                uniforms: { uTexture: { value: tex }, uProgress: { value: 0.0 } },
+                vertexShader: commonVertexShader, fragmentShader: photoFragmentShader
+            });
+            photoScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), photoMaterial));
+        }
+
+        function takePhoto() {
+            if (state.isDeveloping) return;
+            playShutterSound();
+            els.flash.style.opacity = '1'; setTimeout(() => els.flash.style.opacity = '0', 100);
+            
+            // Hide UI
+            els.shutterBtn.style.display = 'none';
+            els.toggleCamBtn.style.display = 'none';
+
+            const size = Math.min(els.video.videoWidth, els.video.videoHeight);
+            const c = document.createElement('canvas'); c.width = size; c.height = size;
+            const ctx = c.getContext('2d');
+            
+            // Capture logic (mirror if front facing?)
+            // Usually saved photos are NOT mirrored by default on phones, but we can stick to WYSIWYG
+            ctx.translate(size/2, size/2);
+            if (state.facingMode === 'user') ctx.scale(-1, 1); // Mirror for front camera capture too?
+            ctx.translate(-size/2, -size/2);
+
+            ctx.drawImage(els.video, (els.video.videoWidth-size)/2, (els.video.videoHeight-size)/2, size, size, 0, 0, size, size);
+            photoTexture = new THREE.CanvasTexture(c);
+
+            els.photoLayer.classList.remove('hidden'); els.photoLayer.style.opacity = '1';
+            state.isDeveloping = true; state.developmentProgress = 0.0; state.currentSpeed = 1.0; state.lastTime = performance.now();
+            initPhotoScene(photoTexture);
+
+            setTimeout(() => {
+                playMotorSound();
+                requestAnimationFrame(() => els.instantPhotoAnimator.style.transform = 'translateY(0%)');
+            }, 200);
+
+            els.viewfinderContainer.style.opacity = '0';
+            els.shakeText.style.opacity = '0'; setTimeout(() => els.shakeText.style.opacity = '1', 1500);
+        }
+
+        function retakePhoto() {
+            // FIX: Ensure video plays when returning to viewfinder (in case it paused)
+            els.video.play().catch(e => console.log("Video play error:", e));
+
+            state.isDeveloping = false;
+            els.instantPhotoAnimator.style.transform = 'translateY(-150%)';
+            els.dateCaption.style.opacity = '0';
+            setTimeout(() => {
+                els.photoLayer.style.opacity = '0';
+                els.viewfinderContainer.style.opacity = '1';
+                
+                // Restore UI
+                els.shutterBtn.style.display = 'block';
+                els.toggleCamBtn.style.display = 'flex';
+                
+                els.btnSave.style.opacity = '0'; els.btnSave.classList.remove('pointer-auto');
+                els.btnRetake.style.opacity = '0'; els.btnRetake.classList.remove('pointer-auto');
+                els.instantPhotoFrame.style.transform = 'none';
+            }, 500);
+        }
+
+        function savePhoto() {
+            // 1. Force a Render to ensure buffer is populated
+            if (photoRenderer) photoRenderer.render(photoScene, photoCamera);
+
+            // 2. Setup Export Canvas
+            const scale = 2;
+            const frameW = els.instantPhotoFrame.offsetWidth * scale;
+            const frameH = els.instantPhotoFrame.offsetHeight * scale;
+            const exCanvas = document.createElement('canvas');
+            exCanvas.width = frameW; exCanvas.height = frameH;
+            const ctx = exCanvas.getContext('2d');
+
+            // 3. Draw Frame (Cream color)
+            // Use roundRect if available, or fillRect
+            const hasRoundRect = !!ctx.roundRect;
+            if (hasRoundRect) {
+                ctx.beginPath();
+                ctx.roundRect(0, 0, frameW, frameH, 4*scale);
+            }
+            
+            // Fill solid cream
+            ctx.fillStyle = "#f7f7f5";
+            if (hasRoundRect) ctx.fill(); else ctx.fillRect(0,0,frameW,frameH);
+
+            // Fill Texture (if loaded)
+            if (textureImg.complete && textureImg.naturalWidth > 0) {
+                const pat = ctx.createPattern(textureImg, 'repeat');
+                ctx.fillStyle = pat;
+                if (hasRoundRect) ctx.fill(); else ctx.fillRect(0,0,frameW,frameH);
+            }
+
+            // 4. Draw Image
+            // IMPORTANT: Calculate margins dynamically based on percentages used in CSS (5%)
+            const padX = frameW * 0.05;
+            const padY = frameW * 0.05; // Top padding matches side
+            const imgSize = frameW - (padX * 2);
+            
+            // Draw from WebGL canvas
+            ctx.drawImage(photoRenderer.domElement, padX, padY, imgSize, imgSize);
+            
+            // Inner Shadow Simulation
+            ctx.strokeStyle = "rgba(0,0,0,0.1)";
+            ctx.lineWidth = 2 * scale;
+            ctx.strokeRect(padX, padY, imgSize, imgSize);
+
+            // 5. Draw Date
+            // Dynamically scale font size based on frame width (approx 1.8rem usually)
+            // Base font on CSS is relative, here we just pick a proportional size
+            const fontSize = frameW * 0.08; 
+            ctx.font = `bold italic ${fontSize}px "Caveat", cursive`; 
+            ctx.fillStyle = "#00008b";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.save();
+            // Bottom margin is 25% in CSS. Center of that is roughly frameH - (12.5% of frameW)
+            const bottomAreaH = frameH * 0.25; 
+            const centerY = frameH - (bottomAreaH * 0.5);
+            
+            ctx.translate(frameW/2, centerY); 
+            ctx.rotate(-2 * Math.PI / 180);
+            ctx.fillText(els.dateCaption.innerText, 0, 0);
+            ctx.restore();
+
+            // 6. Trigger Download (JPG)
+            try {
+                // Quality 0.9 for good JPG
+                const dataUrl = exCanvas.toDataURL('image/jpeg', 0.9);
+                const link = document.createElement('a');
+                link.download = `instant-photo-${Date.now()}.jpg`;
+                link.href = dataUrl;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            } catch (e) {
+                console.error("Download failed", e);
+                alert("Could not save image. Try taking a screenshot.");
+            }
+        }
+
+        function handleMotion(e) {
+            if (!state.isDeveloping || state.developmentProgress >= 1.0) return;
+
+            let ax, ay, az;
+            if (e.acceleration && e.acceleration.x !== null) {
+                ax = e.acceleration.x; ay = e.acceleration.y; az = e.acceleration.z;
+            } else {
+                const g = e.accelerationIncludingGravity;
+                ax = g.x - state.lastAcc.x; ay = g.y - state.lastAcc.y; az = g.z - state.lastAcc.z;
+                state.lastAcc = { x: g.x, y: g.y, z: g.z };
+            }
+
+            const mag = Math.sqrt(ax*ax + ay*ay + az*az);
+
+            if (mag > CONFIG.shakeThreshold) {
+                state.isShaking = true;
+                state.currentSpeed = CONFIG.shakeMultiplier;
+                const intensity = CONFIG.shakeVisualIntensity;
+                const tx = (Math.random() - 0.5) * intensity;
+                const ty = (Math.random() - 0.5) * intensity;
+                const rot = (Math.random() - 0.5) * 5;
+                els.instantPhotoFrame.style.transform = `translate(${tx}px, ${ty}px) rotate(${rot}deg)`;
+            } else {
+                state.isShaking = false;
+                state.currentSpeed = Math.max(1.0, state.currentSpeed * 0.95);
+                els.instantPhotoFrame.style.transform = 'none';
+            }
+        }
+
+        function generateDateString() {
+            const d = new Date();
+            const day = d.getDate();
+            const month = d.toLocaleString('default', { month: 'long' }).toUpperCase();
+            const year = d.getFullYear().toString().slice(-2);
+            return `${day}. ${month} '${year}`;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (!state.isDeveloping && vfRenderer) {
+                if (videoTexture && els.video.readyState >= 2 && vfMaterial.uniforms.uTextureResolution.value.x !== els.video.videoWidth) {
+                    vfMaterial.uniforms.uTextureResolution.value.set(els.video.videoWidth, els.video.videoHeight);
+                }
+                vfRenderer.render(vfScene, vfCamera);
+            }
+
+            if (state.isDeveloping && photoRenderer) {
+                const now = performance.now();
+                const delta = (now - state.lastTime) / 1000;
+                state.lastTime = now;
+
+                if (state.developmentProgress < 1.0) {
+                    const step = (delta / CONFIG.developmentTime) * state.currentSpeed;
+                    state.developmentProgress = Math.min(1.0, state.developmentProgress + step);
+                    photoMaterial.uniforms.uProgress.value = state.developmentProgress;
+                } else {
+                    if (els.shakeText.style.opacity !== '0') {
+                        els.shakeText.style.opacity = '0';
+                        els.btnSave.style.opacity = '1'; els.btnSave.classList.add('pointer-auto');
+                        els.btnRetake.style.opacity = '1'; els.btnRetake.classList.add('pointer-auto');
+                        
+                        els.dateCaption.innerText = generateDateString();
+                        els.dateCaption.style.opacity = '0.9';
+                        els.instantPhotoFrame.style.transform = 'none';
+                    }
+                }
+                photoRenderer.render(photoScene, photoCamera);
+            }
+        }
+        function onWindowResize() {
+            if (vfRenderer) {
+                vfRenderer.setSize(window.innerWidth, window.innerHeight);
+                vfMaterial.uniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
+            }
+        }
+    </script>
+</body>
+</html>
